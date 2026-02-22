@@ -24,6 +24,7 @@ def setup_logging(config):
 
 def main(config_path, run_date=None, frequency=None):
     """Main pipeline execution."""
+    # Load configuration
     config = load_config(config_path)
     logger = setup_logging(config)
     
@@ -31,10 +32,12 @@ def main(config_path, run_date=None, frequency=None):
     logger.info("Starting Investment Data Pipeline")
     logger.info("=" * 60)
     
+    # Override frequency if provided
     if frequency:
         config['extraction']['frequency'] = frequency
         logger.info(f"Frequency set to: {frequency}")
     
+    # Parse run date
     if run_date:
         run_date = datetime.strptime(run_date, '%Y-%m-%d')
     else:
@@ -59,46 +62,27 @@ def main(config_path, run_date=None, frequency=None):
         companies = load_company_list(db_connector)
         logger.info(f"Found {len(companies)} companies")
         
-        # Extract current Value Factor data
-        logger.info("Extracting current Value Factor data...")
-        current_df = extractor.extract_bulk_data(companies)
+        # Extract data
+        logger.info("Extracting data...")
+        df = extractor.extract_bulk_data(companies)
         
-        if current_df.empty:
-            logger.warning("No current data extracted!")
-        else:
-            logger.info(f"Extracted {len(current_df)} current records")
-            
-            # Store current data in MinIO
-            object_name = f"current_data/{run_date.strftime('%Y/%m/%d')}/value_factors.parquet"
-            logger.info(f"Storing current data to MinIO: {object_name}")
-            minio_storage.store_dataframe(current_df, object_name)
-            
-            # Store current data in MongoDB
-            logger.info("Storing current data to MongoDB...")
-            mongo_storage.store_dataframe(current_df)
+        if df.empty:
+            logger.warning("No data extracted!")
+            return
         
-        # Extract historical data (5 years)
-        logger.info("Extracting historical price data (5 years)...")
-        historical_df = extractor.extract_bulk_historical_data(companies)
+        logger.info(f"Extracted {len(df)} records")
         
-        if historical_df.empty:
-            logger.warning("No historical data extracted!")
-        else:
-            logger.info(f"Extracted {len(historical_df)} historical records")
-            
-            # Store historical data in MinIO
-            hist_object_name = f"historical_data/{run_date.strftime('%Y/%m/%d')}/price_history.parquet"
-            logger.info(f"Storing historical data to MinIO: {hist_object_name}")
-            minio_storage.store_dataframe(historical_df, hist_object_name)
-            
-            # Optionally store in MongoDB (might be a lot of data)
-            logger.info("Storing historical data to MongoDB...")
-            mongo_storage.store_dataframe(historical_df)
+        # Store in MinIO (data lake)
+        object_name = f"raw_data/{run_date.strftime('%Y/%m/%d')}/data.parquet"
+        logger.info(f"Storing to MinIO: {object_name}")
+        minio_storage.store_dataframe(df, object_name)
+        
+        # Store in MongoDB (for easy querying)
+        logger.info("Storing to MongoDB...")
+        mongo_storage.store_dataframe(df)
         
         logger.info("=" * 60)
         logger.info("Pipeline completed successfully!")
-        logger.info(f"  - Current records: {len(current_df) if not current_df.empty else 0}")
-        logger.info(f"  - Historical records: {len(historical_df) if not historical_df.empty else 0}")
         logger.info("=" * 60)
         
     except Exception as e:
@@ -106,6 +90,7 @@ def main(config_path, run_date=None, frequency=None):
         raise
     
     finally:
+        # Clean up
         db_connector.close_all()
 
 

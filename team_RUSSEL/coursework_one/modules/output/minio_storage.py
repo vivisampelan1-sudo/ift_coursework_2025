@@ -38,6 +38,18 @@ class MinIOStorage:
             df: DataFrame to store
             object_name: Name/path for the object in MinIO
         """
+        # Clean data: replace Infinity and bad values that Parquet can't handle
+        import numpy as np
+        df = df.copy()
+        df = df.replace([np.inf, -np.inf, 'Infinity', '-Infinity'], None)
+        # Convert numeric columns to proper types
+        numeric_cols = df.select_dtypes(include=['object']).columns
+        for col in numeric_cols:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='ignore')
+            except Exception:
+                pass
+            
         # Convert DataFrame to Parquet bytes
         parquet_bytes = BytesIO()
         df.to_parquet(parquet_bytes, index=False, engine='pyarrow')

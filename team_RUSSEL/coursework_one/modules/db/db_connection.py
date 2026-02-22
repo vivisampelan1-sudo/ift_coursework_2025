@@ -69,15 +69,15 @@ def load_company_list(db_connector: DatabaseConnector) -> list:
         db_connector: DatabaseConnector instance
         
     Returns:
-        List of company dictionaries with id, ticker, name
+        List of company dictionaries
     """
     conn = db_connector.get_postgres_connection()
     cursor = conn.cursor()
     
     query = """
-        SELECT id, ticker, company_name 
+        SELECT symbol, security, gics_sector, gics_industry, country, region
         FROM systematic_equity.company_static
-        ORDER BY ticker
+        ORDER BY symbol
     """
     
     cursor.execute(query)
@@ -85,9 +85,12 @@ def load_company_list(db_connector: DatabaseConnector) -> list:
     
     for row in cursor.fetchall():
         companies.append({
-            'id': row[0],
-            'ticker': row[1],
-            'name': row[2]
+            'ticker': row[0].strip(),
+            'name': row[1],
+            'gics_sector': row[2],
+            'gics_industry': row[3],
+            'country': row[4],
+            'region': row[5]
         })
     
     cursor.close()

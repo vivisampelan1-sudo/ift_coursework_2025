@@ -56,7 +56,7 @@ class DataExtractor:
             
             # Extract Value Factor metrics
             data = {
-               'company_id': company['ticker'],
+                'company_id': company['id'],
                 'ticker': ticker,
                 'company_name': company['name'],
                 'date': current_date.strftime('%Y-%m-%d'),
@@ -65,44 +65,21 @@ class DataExtractor:
                 'current_price': info.get('currentPrice', None),
                 'market_cap': info.get('marketCap', None),
                 
-                # VALUE Factor metrics
+                # Value Factor metrics
                 'pe_ratio': info.get('trailingPE', None),
                 'forward_pe': info.get('forwardPE', None),
                 'pb_ratio': info.get('priceToBook', None),
-                'ps_ratio': info.get('priceToSalesTrailing12Months', None),
                 'book_value': info.get('bookValue', None),
                 'eps': info.get('trailingEps', None),
-                'forward_eps': info.get('forwardEps', None),
-                'enterprise_value': info.get('enterpriseValue', None),
-                'ev_to_ebitda': info.get('enterpriseToEbitda', None),
-                'ev_to_revenue': info.get('enterpriseToRevenue', None),
                 
-                # QUALITY Factor metrics
-                'roe': info.get('returnOnEquity', None),
-                'roa': info.get('returnOnAssets', None),
-                'debt_to_equity': info.get('debtToEquity', None),
-                'current_ratio': info.get('currentRatio', None),
-                'quick_ratio': info.get('quickRatio', None),
-                'profit_margin': info.get('profitMargins', None),
-                'operating_margin': info.get('operatingMargins', None),
-                'gross_margin': info.get('grossMargins', None),
-                'free_cash_flow': info.get('freeCashflow', None),
-                'operating_cash_flow': info.get('operatingCashflow', None),
-                'revenue_growth': info.get('revenueGrowth', None),
-                'earnings_growth': info.get('earningsGrowth', None),
-                
-                # Additional fundamentals
+                # Additional useful metrics
                 'revenue': info.get('totalRevenue', None),
-                'total_debt': info.get('totalDebt', None),
-                'total_cash': info.get('totalCash', None),
-                'ebitda': info.get('ebitda', None),
+                'profit_margin': info.get('profitMargins', None),
                 'dividend_yield': info.get('dividendYield', None),
                 
-                # Sector info (from DB + yfinance for comparison)
+                # Sector and industry for analysis
                 'sector': info.get('sector', None),
                 'industry': info.get('industry', None),
-                'db_sector': company.get('gics_sector', None),
-                'db_industry': company.get('gics_industry', None),
             }
             
             logger.info(f"✅ Successfully extracted data for {ticker}")
@@ -112,7 +89,7 @@ class DataExtractor:
             logger.error(f"❌ Failed to extract {ticker}: {e}")
             # Return empty row with company info to maintain record
             return pd.DataFrame([{
-                'company_id': company['ticker'],
+                'company_id': company['id'],
                 'ticker': ticker,
                 'company_name': company['name'],
                 'date': datetime.now().strftime('%Y-%m-%d'),
@@ -149,7 +126,7 @@ class DataExtractor:
                 return pd.DataFrame()
             
             # Add company info to each row
-            hist['company_id'] = company['ticker']
+            hist['company_id'] = company['id']
             hist['ticker'] = ticker
             hist['company_name'] = company['name']
             
@@ -209,6 +186,86 @@ class DataExtractor:
             if not df.empty:
                 all_data.append(df)
                 print(f"✅ Extracted historical data for {company['ticker']}")
+        
+        if all_data:
+            return pd.concat(all_data, ignore_index=True)
+        else:
+            return pd.DataFrame()
+        
+"""Data extraction module for financial data."""
+from datetime import datetime, timedelta
+import pandas as pd
+from typing import List, Dict
+import requests
+
+
+class DataExtractor:
+    """Extracts financial data for companies."""
+    
+    def __init__(self, config: dict):
+        """
+        Initialize data extractor.
+        
+        Args:
+            config: Configuration dictionary
+        """
+        self.config = config
+        self.lookback_years = config['extraction']['lookback_years']
+    
+    def extract_company_data(self, company: dict) -> pd.DataFrame:
+        """
+        Extract data for a single company.
+        
+        Args:
+            company: Company dictionary with id, ticker, name
+            
+        Returns:
+            DataFrame with extracted data
+        """
+        # TODO: Replace with actual data source
+        # This is a placeholder showing the structure
+        
+        ticker = company['ticker']
+        
+        # Example: You might call an API here
+        # data = self._fetch_from_api(ticker)
+        
+        # For now, create sample structure
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * self.lookback_years)
+        
+        # Placeholder data structure
+        data = {
+            'company_id': company['id'],
+            'ticker': ticker,
+            'date': end_date.strftime('%Y-%m-%d'),
+            'revenue': None,  # To be filled from actual source
+            'profit': None,
+            'market_cap': None,
+            # Add more fields based on your investment factor
+        }
+        
+        return pd.DataFrame([data])
+    
+    def extract_bulk_data(self, companies: List[dict]) -> pd.DataFrame:
+        """
+        Extract data for multiple companies.
+        
+        Args:
+            companies: List of company dictionaries
+            
+        Returns:
+            DataFrame with all extracted data
+        """
+        all_data = []
+        
+        for company in companies:
+            try:
+                df = self.extract_company_data(company)
+                all_data.append(df)
+                print(f"✅ Extracted data for {company['ticker']}")
+            except Exception as e:
+                print(f"❌ Failed to extract {company['ticker']}: {e}")
         
         if all_data:
             return pd.concat(all_data, ignore_index=True)
