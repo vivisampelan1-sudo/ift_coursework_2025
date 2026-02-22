@@ -1,0 +1,21 @@
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+extraction:
+  lookback_years: 5
+  frequency: daily
+postgres:
+  host: localhost
+  port: 5439
+  database: fift
+  user: postgres
+  password: postgres
+mongodb:
+  host: localhost
+  port: 27019
+  database: investment_data
+minio:
+  endpoint: localhost:9000
+  access_key: ift_bigdata
+  secret_key: minio_password
+  secure: false

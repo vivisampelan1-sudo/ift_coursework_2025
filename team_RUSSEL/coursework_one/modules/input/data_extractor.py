@@ -120,54 +120,79 @@ class DataExtractor:
             }])
     
     def extract_historical_data(self, company: dict) -> pd.DataFrame:
-        """
-        Extract historical price data for Value Factor calculation.
-        
-        Args:
-            company: Company dictionary with id, ticker, name
-            
-        Returns:
-            DataFrame with historical data
-        """
+        """Extract historical price data..."""
         ticker = company['ticker']
-        
         try:
-            # Calculate date range
+            from dateutil.relativedelta import relativedelta
+
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=365 * self.lookback_years)
-            
-            # Download historical data
+            start_date = end_date - relativedelta(years=self.lookback_years)
+
             stock = yf.Ticker(ticker)
+
+            # Filter US stocks only (only skip when currency explicitly present and not USD)
+            info = stock.info
+            currency = None
+            if hasattr(info, 'get'):
+                currency = info.get('currency', None)
+            # Only skip when currency is a real string and explicitly not USD
+            if isinstance(currency, str) and currency != 'USD':
+                logger.info(f"⏭️  Skipping {ticker} - not a US stock")
+                return pd.DataFrame()
+
             hist = stock.history(
                 start=start_date.strftime('%Y-%m-%d'),
                 end=end_date.strftime('%Y-%m-%d'),
-                interval='1mo'  # Monthly data
+                interval='1mo'
             )
-            
+
             if hist.empty:
-                logger.warning(f"⚠️  No historical data for {ticker}")
                 return pd.DataFrame()
-            
-            # Add company info to each row
+
             hist['company_id'] = company['ticker']
             hist['ticker'] = ticker
             hist['company_name'] = company['name']
-            
-            # Reset index to make Date a column
+
             hist = hist.reset_index()
-            hist['date'] = hist['Date'].dt.strftime('%Y-%m-%d')
-            
-            # Select relevant columns
-            hist = hist[[
-                'company_id', 'ticker', 'company_name', 'date',
-                'Open', 'High', 'Low', 'Close', 'Volume'
-            ]]
-            
+
+            # Convert Date index to date strings (keep month snapshots)
+            hist['date'] = pd.to_datetime(hist['Date']).dt.strftime('%Y-%m-%d')
+
+            # Add current fundamentals to most recent row only
+            hist['pe_ratio'] = None
+            hist['pb_ratio'] = None
+            hist['market_cap'] = None
+            hist['eps'] = None
+
+            # Populate latest row with current fundamentals
+            latest_idx = hist.index[-1]
+            def _safe_val(key):
+                val = None
+                if hasattr(info, 'get'):
+                    try:
+                        val = info.get(key, None)
+                    except Exception:
+                        val = None
+                else:
+                    val = getattr(info, key, None)
+                if isinstance(val, (int, float, str)) or val is None:
+                    return val
+                return None
+
+            hist.loc[latest_idx, 'pe_ratio'] = _safe_val('trailingPE')
+            hist.loc[latest_idx, 'pb_ratio'] = _safe_val('priceToBook')
+            hist.loc[latest_idx, 'market_cap'] = _safe_val('marketCap')
+            hist.loc[latest_idx, 'eps'] = _safe_val('trailingEps')
+
+            hist = hist[['company_id', 'ticker', 'company_name', 'date',
+                         'Open', 'High', 'Low', 'Close', 'Volume',
+                         'pe_ratio', 'pb_ratio', 'market_cap', 'eps']]
+
             logger.info(f"✅ Extracted {len(hist)} historical records for {ticker}")
             return hist
-            
+
         except Exception as e:
-            logger.error(f"❌ Failed to extract historical data for {ticker}: {e}")
+            logger.exception(f"❌ Failed to extract historical data for {ticker}: {e}")
             return pd.DataFrame()
     
     def extract_bulk_data(self, companies: List[dict]) -> pd.DataFrame:

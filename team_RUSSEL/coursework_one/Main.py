@@ -11,6 +11,7 @@ from modules.db.db_connection import DatabaseConnector, load_company_list
 from modules.input.data_extractor import DataExtractor
 from modules.output.minio_storage import MinIOStorage
 from modules.output.mongo_storage import MongoStorage
+from modules.output.postgres_storage import PostgresStorage
 
 
 def setup_logging(config):
@@ -53,6 +54,7 @@ def main(config_path, run_date=None, frequency=None):
         logger.info("Initializing storage handlers...")
         minio_storage = MinIOStorage(config)
         mongo_storage = MongoStorage(db_connector)
+        postgres_storage = PostgresStorage(db_connector)
         
         # Load company list
         logger.info("Loading company list...")
@@ -94,6 +96,10 @@ def main(config_path, run_date=None, frequency=None):
             # Optionally store in MongoDB (might be a lot of data)
             logger.info("Storing historical data to MongoDB...")
             mongo_storage.store_dataframe(historical_df)
+
+            # Store historical metrics in Postgres
+            logger.info("Storing historical data to Postgres...")
+            postgres_storage.upsert_metrics(historical_df)
         
         logger.info("=" * 60)
         logger.info("Pipeline completed successfully!")
@@ -118,3 +124,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     main(args.config, args.date, args.frequency)
+
+
