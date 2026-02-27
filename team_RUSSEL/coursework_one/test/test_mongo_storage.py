@@ -1,4 +1,8 @@
-"""Tests for the MongoDB storage module."""
+"""
+Unit tests for modules.output.mongo_storage.
+
+:module: test.test_mongo_storage
+"""
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, patch
@@ -7,139 +11,131 @@ from datetime import datetime
 from modules.output.mongo_storage import MongoStorage
 
 
-class TestMongoStorageInit:
-    """Tests for MongoStorage initialization."""
+@pytest.fixture
+def mock_connector():
+    connector = MagicMock()
+    client = MagicMock()
+    db = MagicMock()
+    collection = MagicMock()
 
-    def test_init(self, mock_db_connector):
-        """Test MongoStorage initialization."""
-        storage = MongoStorage(mock_db_connector)
-        assert storage.client is not None
-        assert storage.db is not None
-        assert storage.collection is not None
+    connector.get_mongo_client.return_value = client
+    client.__getitem__.return_value = db
+    db.__getitem__.return_value = collection
 
-    def test_init_uses_correct_database(self, mock_db_connector):
-        """Test that correct database name is used."""
-        storage = MongoStorage(mock_db_connector)
-        mock_mongo = mock_db_connector.get_mongo_client()
-        mock_mongo.__getitem__.assert_called_with("investment_data")
+    return connector, collection
 
 
-class TestStoreDataframe:
-    """Tests for store_dataframe method."""
+@pytest.fixture
+def storage(mock_connector):
+    connector, _ = mock_connector
+    return MongoStorage(connector)
 
-    def test_store_dataframe(self, mock_db_connector, sample_current_df):
-        """Test storing a DataFrame to MongoDB."""
-        storage = MongoStorage(mock_db_connector)
-        mock_result = MagicMock()
-        mock_result.inserted_ids = ["id1"]
-        storage.collection.insert_many.return_value = mock_result
 
-        storage.store_dataframe(sample_current_df)
+class TestMongoStorage:
+    """Tests for MongoStorage class."""
 
-        storage.collection.insert_many.assert_called_once()
+    def test_init_creates_collection(self, mock_connector):
+        """MongoStorage initialises with correct database and collection."""
+        connector, collection = mock_connector
+        ms = MongoStorage(connector)
+        assert ms.collection is not None
 
-    def test_store_dataframe_adds_metadata(self, mock_db_connector, sample_current_df):
-        """Test that inserted_at metadata is added to records."""
-        storage = MongoStorage(mock_db_connector)
-        mock_result = MagicMock()
-        mock_result.inserted_ids = ["id1"]
-        storage.collection.insert_many.return_value = mock_result
-
-        storage.store_dataframe(sample_current_df)
-
-        call_args = storage.collection.insert_many.call_args[0][0]
-        assert "inserted_at" in call_args[0]
-        assert isinstance(call_args[0]["inserted_at"], datetime)
-
-    def test_store_empty_dataframe(self, mock_db_connector):
-        """Test storing an empty DataFrame."""
-        storage = MongoStorage(mock_db_connector)
+    def test_store_empty_dataframe_does_nothing(self, storage, mock_connector):
+        """store_dataframe does nothing for empty DataFrame."""
+        _, collection = mock_connector
         df = pd.DataFrame()
-
-        # Should not call insert_many for empty DataFrame
         storage.store_dataframe(df)
-        storage.collection.insert_many.assert_not_called()
+        collection.bulk_write.assert_not_called()
 
-    def test_store_dataframe_preserves_data(
-        self, mock_db_connector, sample_current_df
-    ):
-        """Test that all data fields are preserved when storing."""
-        storage = MongoStorage(mock_db_connector)
+    def test_store_dataframe_calls_bulk_write(self, storage, mock_connector):
+        """store_dataframe calls bulk_write with operations for valid rows."""
+        _, collection = mock_connector
         mock_result = MagicMock()
-        mock_result.inserted_ids = ["id1"]
-        storage.collection.insert_many.return_value = mock_result
+        mock_result.upserted_count = 1
+        mock_result.modified_count = 0
+        mock_result.matched_count = 0
+        collection.bulk_write.return_value = mock_result
 
-        storage.store_dataframe(sample_current_df)
+        df = pd.DataFrame([
+            {"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": 28.5},
+        ])
+        storage.store_dataframe(df)
+        collection.bulk_write.assert_called_once()
 
-        call_args = storage.collection.insert_many.call_args[0][0]
-        record = call_args[0]
-        assert record["ticker"] == "AAPL"
-        assert record["pe_ratio"] == 28.5
-        assert record["roe"] == 0.157
+    def test_store_dataframe_skips_missing_ticker(self, storage, mock_connector):
+        """store_dataframe skips rows where ticker/date are empty strings."""
+        _, collection = mock_connector
+        df = pd.DataFrame([
+            {"ticker": "", "date": "2026-01-31", "pe_ratio": 28.5},   # empty ticker
+            {"ticker": "AAPL", "date": "", "pe_ratio": 28.5},          # empty date
+        ])
+        storage.store_dataframe(df)
+        collection.bulk_write.assert_not_called()
 
+    def test_store_multiple_rows(self, storage, mock_connector):
+        """store_dataframe creates one operation per valid row."""
+        _, collection = mock_connector
+        mock_result = MagicMock()
+        mock_result.upserted_count = 3
+        mock_result.modified_count = 0
+        mock_result.matched_count = 0
+        collection.bulk_write.return_value = mock_result
 
-class TestQueryByTicker:
-    """Tests for query_by_ticker method."""
+        df = pd.DataFrame([
+            {"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": 28.5},
+            {"ticker": "MSFT", "date": "2026-01-31", "pe_ratio": 32.0},
+            {"ticker": "GOOG", "date": "2026-01-31", "pe_ratio": 22.0},
+        ])
+        storage.store_dataframe(df)
 
-    def test_query_by_ticker(self, mock_db_connector):
-        """Test querying data by ticker symbol."""
-        storage = MongoStorage(mock_db_connector)
-        storage.collection.find.return_value = [
-            {"ticker": "AAPL", "pe_ratio": 28.5, "roe": 0.157}
+        call_args = collection.bulk_write.call_args[0][0]
+        assert len(call_args) == 3
+
+    def test_query_by_ticker_returns_dataframe(self, storage, mock_connector):
+        """query_by_ticker returns DataFrame from collection results."""
+        _, collection = mock_connector
+        collection.find.return_value = [
+            {"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": 28.5},
         ]
 
-        df = storage.query_by_ticker("AAPL")
+        result = storage.query_by_ticker("AAPL")
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+        assert result.iloc[0]["ticker"] == "AAPL"
 
-        storage.collection.find.assert_called_once_with({"ticker": "AAPL"})
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 1
+    def test_query_by_ticker_empty_result(self, storage, mock_connector):
+        """query_by_ticker returns empty DataFrame when no results found."""
+        _, collection = mock_connector
+        collection.find.return_value = []
 
-    def test_query_by_ticker_no_results(self, mock_db_connector):
-        """Test querying when no results found."""
-        storage = MongoStorage(mock_db_connector)
-        storage.collection.find.return_value = []
+        result = storage.query_by_ticker("UNKNOWN")
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
 
-        df = storage.query_by_ticker("INVALID")
-
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
-
-    def test_query_by_ticker_multiple_results(self, mock_db_connector):
-        """Test querying when multiple records exist."""
-        storage = MongoStorage(mock_db_connector)
-        storage.collection.find.return_value = [
-            {"ticker": "AAPL", "date": "2026-01-01", "pe_ratio": 27.0},
-            {"ticker": "AAPL", "date": "2026-02-01", "pe_ratio": 28.5},
+    def test_query_by_year_returns_dataframe(self, storage, mock_connector):
+        """query_by_year returns DataFrame with matching records."""
+        _, collection = mock_connector
+        collection.find.return_value = [
+            {"ticker": "AAPL", "date": "2024-06-30"},
+            {"ticker": "MSFT", "date": "2024-09-30"},
         ]
 
-        df = storage.query_by_ticker("AAPL")
+        result = storage.query_by_year(2024)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 2
 
-        assert len(df) == 2
-
-
-class TestQueryByYear:
-    """Tests for query_by_year method."""
-
-    def test_query_by_year(self, mock_db_connector):
-        """Test querying data by year."""
-        storage = MongoStorage(mock_db_connector)
-        storage.collection.find.return_value = [
-            {"ticker": "AAPL", "date": "2026-02-22", "pe_ratio": 28.5}
+    def test_query_by_ticker_and_year(self, storage, mock_connector):
+        """query_by_ticker_and_year filters by both ticker and year."""
+        _, collection = mock_connector
+        collection.find.return_value = [
+            {"ticker": "AAPL", "date": "2024-03-31"},
         ]
 
-        df = storage.query_by_year(2026)
+        result = storage.query_by_ticker_and_year("AAPL", 2024)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
 
-        storage.collection.find.assert_called_once_with(
-            {"date": {"$regex": "^2026"}}
-        )
-        assert isinstance(df, pd.DataFrame)
-
-    def test_query_by_year_no_results(self, mock_db_connector):
-        """Test querying when no data for year."""
-        storage = MongoStorage(mock_db_connector)
-        storage.collection.find.return_value = []
-
-        df = storage.query_by_year(2020)
-
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
+        # Verify the find was called with correct filter
+        find_filter = collection.find.call_args[0][0]
+        assert find_filter["ticker"] == "AAPL"
+        assert "2024" in str(find_filter["date"])

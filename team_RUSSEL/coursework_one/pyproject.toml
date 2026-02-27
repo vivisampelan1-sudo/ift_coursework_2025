@@ -38,3 +38,18 @@ dev = [
     "isort (>=8.0.0,<9.0.0)",
     "bandit (>=1.9.3,<2.0.0)"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["modules"]
+omit = ["test/*", "scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

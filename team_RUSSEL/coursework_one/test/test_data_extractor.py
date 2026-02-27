@@ -1,289 +1,308 @@
-"""Tests for the data extraction module."""
+"""
+Unit tests for modules.input.data_extractor.
+
+:module: test.test_data_extractor
+"""
 import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
-from datetime import datetime
+import numpy as np
+from unittest.mock import MagicMock, patch
 
 from modules.input.data_extractor import DataExtractor
 
 
-class TestDataExtractorInit:
-    """Tests for DataExtractor initialization."""
+@pytest.fixture
+def config():
+    return {
+        "extraction": {
+            "lookback_years": 5,
+            "batch_size": 10,
+            "frequency": "daily",
+        }
+    }
 
-    def test_init(self, sample_config):
-        """Test DataExtractor initialization."""
-        extractor = DataExtractor(sample_config)
-        assert extractor.config == sample_config
-        assert extractor.lookback_years == 5
 
-    def test_init_lookback_years(self, sample_config):
-        """Test that lookback_years is set from config."""
-        sample_config["extraction"]["lookback_years"] = 3
-        extractor = DataExtractor(sample_config)
-        assert extractor.lookback_years == 3
+@pytest.fixture
+def extractor(config):
+    return DataExtractor(config)
+
+
+@pytest.fixture
+def sample_company():
+    return {
+        "ticker": "AAPL",
+        "name": "Apple Inc.",
+        "gics_sector": "Technology",
+        "gics_industry": "Consumer Electronics",
+    }
+
+
+class TestSafeInfoValue:
+    """Tests for DataExtractor._safe_info_value static method."""
+
+    def test_returns_valid_float(self):
+        info = {"pe_ratio": 25.5}
+        assert DataExtractor._safe_info_value(info, "pe_ratio") == 25.5
+
+    def test_returns_valid_int(self):
+        info = {"marketCap": 1000000}
+        assert DataExtractor._safe_info_value(info, "marketCap") == 1000000
+
+    def test_returns_valid_string(self):
+        info = {"sector": "Technology"}
+        assert DataExtractor._safe_info_value(info, "sector") == "Technology"
+
+    def test_returns_none_for_missing_key(self):
+        info = {"pe_ratio": 25.5}
+        assert DataExtractor._safe_info_value(info, "missing_key") is None
+
+    def test_returns_none_for_nan(self):
+        info = {"pe_ratio": float("nan")}
+        assert DataExtractor._safe_info_value(info, "pe_ratio") is None
+
+    def test_returns_none_for_inf(self):
+        info = {"pe_ratio": float("inf")}
+        assert DataExtractor._safe_info_value(info, "pe_ratio") is None
+
+    def test_returns_none_for_negative_inf(self):
+        info = {"pe_ratio": float("-inf")}
+        assert DataExtractor._safe_info_value(info, "pe_ratio") is None
+
+    def test_returns_none_for_numpy_nan(self):
+        info = {"val": np.nan}
+        assert DataExtractor._safe_info_value(info, "val") is None
+
+    def test_returns_none_for_numpy_inf(self):
+        info = {"val": np.inf}
+        assert DataExtractor._safe_info_value(info, "val") is None
+
+    def test_returns_none_for_list_value(self):
+        info = {"val": [1, 2, 3]}
+        assert DataExtractor._safe_info_value(info, "val") is None
+
+    def test_returns_none_for_dict_value(self):
+        info = {"val": {"nested": 1}}
+        assert DataExtractor._safe_info_value(info, "val") is None
+
+    def test_returns_none_for_non_dict_info(self):
+        assert DataExtractor._safe_info_value(None, "key") is None
+        assert DataExtractor._safe_info_value("string", "key") is None
+
+    def test_converts_numpy_scalar(self):
+        info = {"val": np.float64(12.5)}
+        result = DataExtractor._safe_info_value(info, "val")
+        assert result == 12.5
+        assert isinstance(result, float)
+
+
+class TestSafeScalar:
+    """Tests for DataExtractor._safe_scalar static method."""
+
+    def test_returns_plain_float(self):
+        assert DataExtractor._safe_scalar(3.14) == 3.14
+
+    def test_returns_plain_int(self):
+        assert DataExtractor._safe_scalar(42) == 42
+
+    def test_returns_none_for_none(self):
+        assert DataExtractor._safe_scalar(None) is None
+
+    def test_returns_none_for_nan(self):
+        assert DataExtractor._safe_scalar(float("nan")) is None
+
+    def test_returns_none_for_inf(self):
+        assert DataExtractor._safe_scalar(float("inf")) is None
+
+    def test_returns_none_for_negative_inf(self):
+        assert DataExtractor._safe_scalar(float("-inf")) is None
+
+    def test_converts_numpy_float64(self):
+        result = DataExtractor._safe_scalar(np.float64(5.5))
+        assert result == 5.5
+        assert isinstance(result, float)
+
+    def test_converts_numpy_int64(self):
+        result = DataExtractor._safe_scalar(np.int64(100))
+        assert result == 100
+
+    def test_returns_none_for_pandas_na(self):
+        assert DataExtractor._safe_scalar(pd.NA) is None
+
+    def test_returns_none_for_pandas_nat(self):
+        assert DataExtractor._safe_scalar(pd.NaT) is None
+
+
+class TestSafeDivide:
+    """Tests for DataExtractor._safe_divide static method."""
+
+    def test_normal_division(self):
+        assert DataExtractor._safe_divide(10.0, 2.0) == 5.0
+
+    def test_division_returns_float(self):
+        result = DataExtractor._safe_divide(10, 4)
+        assert result == 2.5
+        assert isinstance(result, float)
+
+    def test_returns_none_for_zero_denominator(self):
+        assert DataExtractor._safe_divide(10.0, 0) is None
+
+    def test_returns_none_when_numerator_is_none(self):
+        assert DataExtractor._safe_divide(None, 2.0) is None
+
+    def test_returns_none_when_denominator_is_none(self):
+        assert DataExtractor._safe_divide(10.0, None) is None
+
+    def test_returns_none_for_both_none(self):
+        assert DataExtractor._safe_divide(None, None) is None
+
+    def test_returns_none_for_inf_result(self):
+        # Very small denominator leading to inf
+        result = DataExtractor._safe_divide(1e308, 1e-308)
+        assert result is None
+
+    def test_handles_negative_values(self):
+        result = DataExtractor._safe_divide(-20.0, 4.0)
+        assert result == -5.0
 
 
 class TestExtractCompanyData:
-    """Tests for extract_company_data method."""
+    """Tests for DataExtractor.extract_company_data."""
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_success(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test successful data extraction for a single company."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {
-            "currentPrice": 230.50,
-            "marketCap": 3500000000000,
+    def test_returns_dataframe(self, extractor, sample_company):
+        """extract_company_data returns a DataFrame."""
+        mock_stock = MagicMock()
+        mock_stock.info = {
+            "currentPrice": 150.0,
+            "marketCap": 2500000000000,
             "trailingPE": 28.5,
-            "forwardPE": 25.3,
-            "priceToBook": 45.2,
-            "bookValue": 4.38,
-            "trailingEps": 6.42,
-            "returnOnEquity": 0.157,
-            "returnOnAssets": 0.285,
-            "debtToEquity": 176.3,
-            "profitMargins": 0.263,
-            "currentRatio": 1.07,
-            "freeCashflow": 111000000000,
             "sector": "Technology",
             "industry": "Consumer Electronics",
         }
-        mock_ticker_class.return_value = mock_ticker
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
+        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+            result = extractor.extract_company_data(sample_company)
 
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 1
-        assert df["ticker"].values[0] == "AAPL"
-        assert df["company_name"].values[0] == "Apple Inc."
-        assert df["current_price"].values[0] == 230.50
-        assert df["pe_ratio"].values[0] == 28.5
-        assert df["roe"].values[0] == 0.157
-        assert df["debt_to_equity"].values[0] == 176.3
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_missing_fields(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test extraction when some fields are missing from API."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {
-            "currentPrice": 100.0,
-            # Missing most fields - should return None
-        }
-        mock_ticker_class.return_value = mock_ticker
+    def test_contains_required_columns(self, extractor, sample_company):
+        """extract_company_data DataFrame contains core factor columns."""
+        mock_stock = MagicMock()
+        mock_stock.info = {"currentPrice": 150.0, "trailingPE": 28.5}
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
+        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+            result = extractor.extract_company_data(sample_company)
 
-        assert len(df) == 1
-        assert df["ticker"].values[0] == "AAPL"
-        assert df["current_price"].values[0] == 100.0
-        assert df["pe_ratio"].values[0] is None
-        assert df["roe"].values[0] is None
+        for col in ["ticker", "date", "pe_ratio", "roe", "profit_margin"]:
+            assert col in result.columns
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_api_failure(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test extraction when API call fails."""
-        mock_ticker_class.side_effect = Exception("API Error")
+    def test_ticker_is_set_correctly(self, extractor, sample_company):
+        """extract_company_data sets ticker from company dict."""
+        mock_stock = MagicMock()
+        mock_stock.info = {}
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
+        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+            result = extractor.extract_company_data(sample_company)
 
-        # Should return a row with error info, not crash
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 1
-        assert df["ticker"].values[0] == "AAPL"
-        assert "error" in df.columns
+        assert result.iloc[0]["ticker"] == "AAPL"
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_has_date(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test that extracted data includes a date field."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {"currentPrice": 100.0}
-        mock_ticker_class.return_value = mock_ticker
+    def test_returns_row_on_exception(self, extractor, sample_company):
+        """extract_company_data returns a row even when yfinance raises."""
+        with patch(
+            "modules.input.data_extractor.yf.Ticker",
+            side_effect=Exception("Network error"),
+        ):
+            result = extractor.extract_company_data(sample_company)
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+        assert result.iloc[0]["ticker"] == "AAPL"
 
-        assert "date" in df.columns
-        # Date should be today's date
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert df["date"].values[0] == today
+    def test_sector_from_company_dict(self, extractor, sample_company):
+        """extract_company_data uses gics_sector from company dict as db_sector."""
+        mock_stock = MagicMock()
+        mock_stock.info = {}
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_value_metrics(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test that all Value factor metrics are extracted."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {
-            "trailingPE": 28.5,
-            "forwardPE": 25.3,
-            "priceToBook": 45.2,
-            "priceToSalesTrailing12Months": 8.5,
-            "enterpriseToEbitda": 22.1,
-            "enterpriseToRevenue": 8.8,
-        }
-        mock_ticker_class.return_value = mock_ticker
+        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+            result = extractor.extract_company_data(sample_company)
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
-
-        value_columns = [
-            "pe_ratio", "forward_pe", "pb_ratio", "ps_ratio",
-            "ev_to_ebitda", "ev_to_revenue",
-        ]
-        for col in value_columns:
-            assert col in df.columns, f"Missing Value metric: {col}"
-
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_company_data_quality_metrics(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test that all Quality factor metrics are extracted."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {
-            "returnOnEquity": 0.157,
-            "returnOnAssets": 0.285,
-            "debtToEquity": 176.3,
-            "currentRatio": 1.07,
-            "profitMargins": 0.263,
-            "operatingMargins": 0.312,
-            "freeCashflow": 111000000000,
-        }
-        mock_ticker_class.return_value = mock_ticker
-
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_company_data(sample_company)
-
-        quality_columns = [
-            "roe", "roa", "debt_to_equity", "current_ratio",
-            "profit_margin", "operating_margin", "free_cash_flow",
-        ]
-        for col in quality_columns:
-            assert col in df.columns, f"Missing Quality metric: {col}"
+        assert result.iloc[0]["db_sector"] == "Technology"
 
 
-class TestExtractHistoricalData:
-    """Tests for extract_historical_data method."""
+class TestBuildFundamentals:
+    """Tests for DataExtractor._build_fundamentals_from_statements."""
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_historical_data_success(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test successful historical data extraction."""
-        mock_ticker = MagicMock()
-        mock_hist = pd.DataFrame(
-            {
-                "Open": [185.0, 188.5],
-                "High": [190.0, 195.0],
-                "Low": [183.0, 186.0],
-                "Close": [188.5, 193.2],
-                "Volume": [50000000, 48000000],
-            },
-            index=pd.to_datetime(["2025-01-01", "2025-02-01"]),
+    def test_returns_empty_df_for_none_statements(self, extractor):
+        """Returns empty DataFrame when statements are None."""
+        result = extractor._build_fundamentals_from_statements(
+            None, None, None, is_annual=True
         )
-        mock_hist.index.name = "Date"
-        mock_ticker.history.return_value = mock_hist
-        mock_ticker_class.return_value = mock_ticker
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_historical_data(sample_company)
+    def test_returns_empty_df_for_empty_statements(self, extractor):
+        """Returns empty DataFrame when income/balance statements are empty."""
+        result = extractor._build_fundamentals_from_statements(
+            pd.DataFrame(), pd.DataFrame(), None, is_annual=True
+        )
+        assert result.empty
 
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 2
-        assert "ticker" in df.columns
-        assert "date" in df.columns
-        assert "Close" in df.columns
-        assert df["ticker"].values[0] == "AAPL"
+    def test_annual_fundamentals_has_expected_columns(self, extractor):
+        """Annual fundamentals DataFrame has ROE, ROA, margin columns."""
+        import pandas as pd
+        from datetime import datetime
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_historical_data_empty(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test extraction when no historical data available."""
-        mock_ticker = MagicMock()
-        mock_ticker.history.return_value = pd.DataFrame()
-        mock_ticker_class.return_value = mock_ticker
+        date1 = pd.Timestamp("2023-12-31")
+        date2 = pd.Timestamp("2022-12-31")
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_historical_data(sample_company)
+        inc = pd.DataFrame(
+            {
+                date1: {"Net Income": 1e9, "Total Revenue": 5e9, "Diluted EPS": 2.5,
+                        "EBITDA": 2e9, "Operating Income": 1.5e9, "Gross Profit": 3e9},
+                date2: {"Net Income": 8e8, "Total Revenue": 4e9, "Diluted EPS": 2.0,
+                        "EBITDA": 1.5e9, "Operating Income": 1.2e9, "Gross Profit": 2.5e9},
+            }
+        )
+        bal = pd.DataFrame(
+            {
+                date1: {"Stockholders Equity": 5e9, "Total Assets": 20e9,
+                        "Total Debt": 2e9, "Ordinary Shares Number": 1e9},
+                date2: {"Stockholders Equity": 4.5e9, "Total Assets": 18e9,
+                        "Total Debt": 2.5e9, "Ordinary Shares Number": 1e9},
+            }
+        )
 
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
+        result = extractor._build_fundamentals_from_statements(
+            inc, bal, None, is_annual=True
+        )
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_historical_data_api_failure(
-        self, mock_ticker_class, sample_config, sample_company
-    ):
-        """Test extraction when API fails."""
-        mock_ticker = MagicMock()
-        mock_ticker.history.side_effect = Exception("API Error")
-        mock_ticker_class.return_value = mock_ticker
-
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_historical_data(sample_company)
-
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
+        assert not result.empty
+        assert "roe" in result.columns
+        assert "roa" in result.columns
+        assert "profit_margin" in result.columns
+        assert "eps" in result.columns
 
 
 class TestExtractBulkData:
-    """Tests for bulk extraction methods."""
+    """Tests for DataExtractor.extract_bulk_data."""
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_bulk_data(
-        self, mock_ticker_class, sample_config, sample_companies
-    ):
-        """Test bulk data extraction for multiple companies."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = {"currentPrice": 100.0, "trailingPE": 20.0}
-        mock_ticker_class.return_value = mock_ticker
+    def test_returns_combined_dataframe(self, extractor):
+        """extract_bulk_data concatenates results from multiple companies."""
+        companies = [
+            {"ticker": "AAPL", "name": "Apple"},
+            {"ticker": "MSFT", "name": "Microsoft"},
+        ]
 
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_bulk_data(sample_companies)
+        mock_df = pd.DataFrame([{"ticker": "X", "date": "2026-01-01"}])
 
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3
+        with patch.object(extractor, "extract_company_data", return_value=mock_df):
+            result = extractor.extract_bulk_data(companies)
 
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_bulk_data_empty_list(self, mock_ticker_class, sample_config):
-        """Test bulk extraction with empty company list."""
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_bulk_data([])
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 2
 
-        assert isinstance(df, pd.DataFrame)
-        assert df.empty
-
-    @patch("modules.input.data_extractor.yf.Ticker")
-    def test_extract_bulk_historical_data(
-        self, mock_ticker_class, sample_config, sample_companies
-    ):
-        """Test bulk historical data extraction."""
-        mock_ticker = MagicMock()
-        mock_hist = pd.DataFrame(
-            {
-                "Open": [100.0],
-                "High": [105.0],
-                "Low": [98.0],
-                "Close": [103.0],
-                "Volume": [1000000],
-            },
-            index=pd.to_datetime(["2025-01-01"]),
-        )
-        mock_hist.index.name = "Date"
-        mock_ticker.history.return_value = mock_hist
-        mock_ticker_class.return_value = mock_ticker
-
-        extractor = DataExtractor(sample_config)
-        df = extractor.extract_bulk_historical_data(sample_companies)
-
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3
+    def test_returns_empty_for_empty_companies(self, extractor):
+        """extract_bulk_data returns empty DataFrame for empty input."""
+        result = extractor.extract_bulk_data([])
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty

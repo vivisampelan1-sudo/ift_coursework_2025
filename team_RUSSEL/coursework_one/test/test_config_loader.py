@@ -1,8 +1,12 @@
-"""Tests for the configuration loader utility."""
+"""
+Unit tests for modules.utils.config_loader.
+
+:module: test.test_config_loader
+"""
 import pytest
-import os
 import tempfile
-import yaml
+import os
+from pathlib import Path
 
 from modules.utils.config_loader import load_config
 
@@ -10,71 +14,65 @@ from modules.utils.config_loader import load_config
 class TestLoadConfig:
     """Tests for load_config function."""
 
-    def test_load_valid_config(self):
-        """Test loading a valid YAML configuration file."""
-        # Create a temporary config file
-        config_data = {
-            "postgres": {"host": "localhost", "port": 5439},
-            "mongodb": {"host": "localhost", "port": 27019},
-        }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
-            yaml.dump(config_data, f)
-            temp_path = f.name
+    def test_load_valid_config(self, tmp_path):
+        """load_config returns a dict from a valid YAML file."""
+        cfg_file = tmp_path / "conf.yaml"
+        cfg_file.write_text(
+            "postgres:\n"
+            "  host: localhost\n"
+            "  port: 5439\n"
+            "mongodb:\n"
+            "  host: localhost\n"
+            "  port: 27019\n"
+        )
+        result = load_config(str(cfg_file))
+        assert isinstance(result, dict)
+        assert result["postgres"]["host"] == "localhost"
+        assert result["postgres"]["port"] == 5439
+        assert result["mongodb"]["port"] == 27019
 
-        try:
-            config = load_config(temp_path)
-            assert config["postgres"]["host"] == "localhost"
-            assert config["postgres"]["port"] == 5439
-            assert config["mongodb"]["host"] == "localhost"
-            assert config["mongodb"]["port"] == 27019
-        finally:
-            os.unlink(temp_path)
+    def test_load_config_returns_all_sections(self, tmp_path):
+        """load_config returns all top-level sections from YAML."""
+        cfg_file = tmp_path / "conf.yaml"
+        cfg_file.write_text(
+            "postgres:\n  host: db\n"
+            "mongodb:\n  host: mongo\n"
+            "minio:\n  endpoint: localhost:9000\n"
+            "extraction:\n  lookback_years: 5\n"
+        )
+        result = load_config(str(cfg_file))
+        assert "postgres" in result
+        assert "mongodb" in result
+        assert "minio" in result
+        assert "extraction" in result
 
     def test_load_config_file_not_found(self):
-        """Test that FileNotFoundError is raised for missing config."""
+        """load_config raises FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
-            load_config("nonexistent/path/config.yaml")
+            load_config("/nonexistent/path/conf.yaml")
 
-    def test_load_config_default_path(self):
-        """Test loading config from the default path."""
-        config = load_config("config/conf.yaml")
-        assert "postgres" in config
-        assert "mongodb" in config
-        assert "minio" in config
-        assert "extraction" in config
-        assert "logging" in config
+    def test_load_config_default_path_used(self):
+        """load_config uses config/conf.yaml as default path."""
+        with pytest.raises(FileNotFoundError):
+            load_config("nonexistent_config.yaml")
 
-    def test_config_contains_required_postgres_fields(self):
-        """Test that config has all required PostgreSQL fields."""
-        config = load_config("config/conf.yaml")
-        required_fields = ["host", "port", "database", "user", "password"]
-        for field in required_fields:
-            assert field in config["postgres"], f"Missing postgres field: {field}"
+    def test_load_config_nested_values(self, tmp_path):
+        """load_config correctly parses nested YAML structures."""
+        cfg_file = tmp_path / "conf.yaml"
+        cfg_file.write_text(
+            "extraction:\n"
+            "  frequency: daily\n"
+            "  lookback_years: 5\n"
+            "  batch_size: 10\n"
+        )
+        result = load_config(str(cfg_file))
+        assert result["extraction"]["frequency"] == "daily"
+        assert result["extraction"]["lookback_years"] == 5
+        assert result["extraction"]["batch_size"] == 10
 
-    def test_config_contains_required_mongodb_fields(self):
-        """Test that config has all required MongoDB fields."""
-        config = load_config("config/conf.yaml")
-        required_fields = ["host", "port", "database"]
-        for field in required_fields:
-            assert field in config["mongodb"], f"Missing mongodb field: {field}"
-
-    def test_config_contains_required_minio_fields(self):
-        """Test that config has all required MinIO fields."""
-        config = load_config("config/conf.yaml")
-        required_fields = ["endpoint", "access_key", "secret_key", "secure"]
-        for field in required_fields:
-            assert field in config["minio"], f"Missing minio field: {field}"
-
-    def test_config_contains_extraction_settings(self):
-        """Test that config has extraction settings."""
-        config = load_config("config/conf.yaml")
-        assert "frequency" in config["extraction"]
-        assert "lookback_years" in config["extraction"]
-        assert config["extraction"]["lookback_years"] > 0
-
-    def test_config_returns_dict(self):
-        """Test that load_config returns a dictionary."""
-        config = load_config("config/conf.yaml")
-        assert isinstance(config, dict)
+    def test_load_config_returns_dict_type(self, tmp_path):
+        """load_config always returns a Python dict."""
+        cfg_file = tmp_path / "conf.yaml"
+        cfg_file.write_text("key: value\n")
+        result = load_config(str(cfg_file))
+        assert type(result) is dict

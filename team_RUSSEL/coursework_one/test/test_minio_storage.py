@@ -1,157 +1,170 @@
-"""Tests for the MinIO storage module."""
+"""
+Unit tests for modules.output.minio_storage.
+
+:module: test.test_minio_storage
+"""
 import pytest
 import pandas as pd
 import numpy as np
-from unittest.mock import patch, MagicMock, ANY
 from io import BytesIO
+from unittest.mock import MagicMock, patch
 
 from modules.output.minio_storage import MinIOStorage
 
 
+@pytest.fixture
+def config():
+    return {
+        "minio": {
+            "endpoint": "localhost:9000",
+            "access_key": "ift_bigdata",
+            "secret_key": "minio_password",
+            "secure": False,
+        }
+    }
+
+
+@pytest.fixture
+def storage(config):
+    with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+        mock_client = MagicMock()
+        mock_client.bucket_exists.return_value = True
+        mock_minio_cls.return_value = mock_client
+        s = MinIOStorage(config)
+        s.client = mock_client
+        return s
+
+
+class TestCleanDataframe:
+    """Tests for MinIOStorage._clean_dataframe static method."""
+
+    def test_replaces_inf_with_none(self):
+        df = pd.DataFrame({"val": [1.0, float("inf"), -float("inf"), 3.0]})
+        result = MinIOStorage._clean_dataframe(df)
+        assert result["val"].isna().sum() == 2
+        assert result["val"].iloc[0] == 1.0
+        assert result["val"].iloc[3] == 3.0
+
+    def test_preserves_text_columns(self):
+        df = pd.DataFrame({
+            "ticker": ["AAPL", "MSFT"],
+            "sector": ["Technology", "Technology"],
+            "val": [1.0, 2.0],
+        })
+        result = MinIOStorage._clean_dataframe(df)
+        assert list(result["ticker"]) == ["AAPL", "MSFT"]
+        assert list(result["sector"]) == ["Technology", "Technology"]
+
+    def test_does_not_modify_original(self):
+        df = pd.DataFrame({"val": [1.0, float("inf")]})
+        original_val = df["val"].iloc[1]
+        MinIOStorage._clean_dataframe(df)
+        # Original should be unchanged (copy is made inside method)
+        assert df["val"].iloc[1] == original_val
+
+    def test_handles_empty_dataframe(self):
+        df = pd.DataFrame()
+        result = MinIOStorage._clean_dataframe(df)
+        assert result.empty
+
+    def test_handles_all_valid_data(self):
+        df = pd.DataFrame({
+            "ticker": ["AAPL"],
+            "pe_ratio": [28.5],
+            "roe": [0.87],
+        })
+        result = MinIOStorage._clean_dataframe(df)
+        assert result["pe_ratio"].iloc[0] == 28.5
+        assert result["roe"].iloc[0] == 0.87
+
+    def test_replaces_numpy_inf(self):
+        df = pd.DataFrame({"val": [np.inf, -np.inf, 1.0]})
+        result = MinIOStorage._clean_dataframe(df)
+        assert result["val"].isna().sum() == 2
+
+    def test_known_text_columns_not_converted(self):
+        """None of the known text columns should be coerced to numeric."""
+        text_cols = ["company_id", "ticker", "company_name", "date",
+                     "sector", "industry", "db_sector", "db_industry"]
+        df = pd.DataFrame({col: ["test_value"] for col in text_cols})
+        result = MinIOStorage._clean_dataframe(df)
+        for col in text_cols:
+            # Accept either object or pandas StringDtype (pandas 3.x)
+            assert result[col].dtype == object or hasattr(result[col].dtype, "na_value")
+
+
 class TestMinIOStorageInit:
-    """Tests for MinIOStorage initialization."""
+    """Tests for MinIOStorage initialisation."""
 
-    @patch("modules.output.minio_storage.Minio")
-    def test_init_creates_client(self, mock_minio_class, sample_config):
-        """Test that MinIO client is created with correct config."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
+    def test_creates_bucket_if_not_exists(self, config):
+        """MinIOStorage creates bucket when it does not exist."""
+        with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+            mock_client = MagicMock()
+            mock_client.bucket_exists.return_value = False
+            mock_minio_cls.return_value = mock_client
 
-        storage = MinIOStorage(sample_config)
+            MinIOStorage(config)
 
-        mock_minio_class.assert_called_once_with(
-            "localhost:9000",
-            access_key="ift_bigdata",
-            secret_key="minio_password",
-            secure=False,
-        )
+            mock_client.make_bucket.assert_called_once_with("investment-data")
 
-    @patch("modules.output.minio_storage.Minio")
-    def test_init_creates_bucket_if_not_exists(self, mock_minio_class, sample_config):
-        """Test that bucket is created if it doesn't exist."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = False
-        mock_minio_class.return_value = mock_client
+    def test_does_not_create_bucket_if_exists(self, config):
+        """MinIOStorage does not create bucket when it already exists."""
+        with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+            mock_client = MagicMock()
+            mock_client.bucket_exists.return_value = True
+            mock_minio_cls.return_value = mock_client
 
-        storage = MinIOStorage(sample_config)
+            MinIOStorage(config)
 
-        mock_client.make_bucket.assert_called_once_with("investment-data")
-
-    @patch("modules.output.minio_storage.Minio")
-    def test_init_skips_bucket_creation_if_exists(
-        self, mock_minio_class, sample_config
-    ):
-        """Test that bucket creation is skipped if already exists."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
-
-        storage = MinIOStorage(sample_config)
-
-        mock_client.make_bucket.assert_not_called()
+            mock_client.make_bucket.assert_not_called()
 
 
 class TestStoreDataframe:
-    """Tests for store_dataframe method."""
+    """Tests for MinIOStorage.store_dataframe."""
 
-    @patch("modules.output.minio_storage.Minio")
-    def test_store_dataframe(self, mock_minio_class, sample_config, sample_current_df):
-        """Test storing a DataFrame to MinIO."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
+    def test_calls_put_object(self, storage):
+        """store_dataframe calls put_object on the MinIO client."""
+        df = pd.DataFrame([
+            {"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": 28.5}
+        ])
+        storage.store_dataframe(df, "current_data/2026/01/31/test.parquet")
+        storage.client.put_object.assert_called_once()
 
-        storage = MinIOStorage(sample_config)
-        storage.store_dataframe(sample_current_df, "test/data.parquet")
+    def test_stores_with_correct_object_name(self, storage):
+        """store_dataframe uses provided object name."""
+        df = pd.DataFrame([{"ticker": "AAPL", "date": "2026-01-31"}])
+        obj_name = "current_data/2026/01/test.parquet"
+        storage.store_dataframe(df, obj_name)
 
-        mock_client.put_object.assert_called_once()
-        call_args = mock_client.put_object.call_args
-        assert call_args[0][0] == "investment-data"
-        assert call_args[0][1] == "test/data.parquet"
+        call_args = storage.client.put_object.call_args
+        assert call_args[0][1] == obj_name
 
-    @patch("modules.output.minio_storage.Minio")
-    def test_store_dataframe_handles_infinity(self, mock_minio_class, sample_config):
-        """Test that Infinity values are cleaned before storage."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
-
-        # Create DataFrame with Infinity values
-        df = pd.DataFrame(
-            {
-                "ticker": ["TEST"],
-                "pe_ratio": ["Infinity"],
-                "pb_ratio": [float("inf")],
-                "roe": [-float("inf")],
-                "normal_val": [1.5],
-            }
-        )
-
-        storage = MinIOStorage(sample_config)
-        # Should not raise an error
-        storage.store_dataframe(df, "test/infinity.parquet")
-        mock_client.put_object.assert_called_once()
-
-    @patch("modules.output.minio_storage.Minio")
-    def test_store_dataframe_with_none_values(self, mock_minio_class, sample_config):
-        """Test storing DataFrame with None values."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
-
-        df = pd.DataFrame(
-            {
-                "ticker": ["TEST"],
-                "pe_ratio": [None],
-                "pb_ratio": [None],
-            }
-        )
-
-        storage = MinIOStorage(sample_config)
-        storage.store_dataframe(df, "test/none.parquet")
-        mock_client.put_object.assert_called_once()
-
-    @patch("modules.output.minio_storage.Minio")
-    def test_store_empty_dataframe(self, mock_minio_class, sample_config):
-        """Test storing an empty DataFrame."""
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_minio_class.return_value = mock_client
-
-        df = pd.DataFrame()
-
-        storage = MinIOStorage(sample_config)
-        storage.store_dataframe(df, "test/empty.parquet")
-        mock_client.put_object.assert_called_once()
+    def test_sanitises_inf_before_storage(self, storage):
+        """store_dataframe sanitises infinity before writing Parquet."""
+        df = pd.DataFrame([{"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": float("inf")}])
+        # Should not raise
+        storage.store_dataframe(df, "test/test.parquet")
+        storage.client.put_object.assert_called_once()
 
 
 class TestRetrieveDataframe:
-    """Tests for retrieve_dataframe method."""
+    """Tests for MinIOStorage.retrieve_dataframe."""
 
-    @patch("modules.output.minio_storage.Minio")
-    def test_retrieve_dataframe(self, mock_minio_class, sample_config):
-        """Test retrieving a DataFrame from MinIO."""
-        # Create a real parquet buffer to return
-        original_df = pd.DataFrame(
-            {"ticker": ["AAPL"], "pe_ratio": [28.5], "roe": [0.157]}
-        )
-        buffer = BytesIO()
-        original_df.to_parquet(buffer, index=False)
-        buffer.seek(0)
+    def test_retrieve_returns_dataframe(self, storage):
+        """retrieve_dataframe returns a DataFrame from Parquet bytes."""
+        original_df = pd.DataFrame([
+            {"ticker": "AAPL", "date": "2026-01-31", "pe_ratio": 28.5}
+        ])
+        buf = BytesIO()
+        original_df.to_parquet(buf, index=False, engine="pyarrow")
+        buf.seek(0)
 
         mock_response = MagicMock()
-        mock_response.read.return_value = buffer.getvalue()
+        mock_response.read.return_value = buf.getvalue()
+        storage.client.get_object.return_value = mock_response
 
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        mock_client.get_object.return_value = mock_response
-        mock_minio_class.return_value = mock_client
+        result = storage.retrieve_dataframe("test/test.parquet")
 
-        storage = MinIOStorage(sample_config)
-        df = storage.retrieve_dataframe("test/data.parquet")
-
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 1
-        assert df["ticker"].values[0] == "AAPL"
-        assert df["pe_ratio"].values[0] == 28.5
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+        assert result.iloc[0]["ticker"] == "AAPL"

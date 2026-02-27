@@ -1,19 +1,38 @@
-"""MinIO storage handler."""
+"""
+MinIO storage handler.
+
+Stores DataFrames as Parquet files in MinIO (S3-compatible object storage),
+providing the data lake layer of the pipeline architecture.
+
+:module: modules.output.minio_storage
+"""
 from minio import Minio
 from io import BytesIO
+import numpy as np
 import pandas as pd
-from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MinIOStorage:
-    """Handles data storage in MinIO (S3-compatible)."""
-    
+    """
+    Handles data storage and retrieval in MinIO (S3-compatible).
+
+    Data is stored in the ``investment-data`` bucket as Parquet files,
+    organised by date path (e.g. ``current_data/2026/02/23/value_factors.parquet``).
+
+    :param config: Configuration dictionary with a ``minio`` section containing
+        ``endpoint``, ``access_key``, ``secret_key``, and ``secure`` keys.
+    :type config: dict
+    """
+
     def __init__(self, config: dict):
         """
-        Initialize MinIO client.
-        
-        Args:
-            config: Configuration dictionary
+        Initialise MinIO client and ensure bucket exists.
+
+        :param config: Configuration dictionary.
+        :type config: dict
         """
         self.client = Minio(
             config['minio']['endpoint'],
@@ -23,39 +42,66 @@ class MinIOStorage:
         )
         self.bucket_name = "investment-data"
         self._ensure_bucket_exists()
-    
+
     def _ensure_bucket_exists(self):
-        """Create bucket if it doesn't exist."""
+        """Create the storage bucket if it does not already exist."""
         if not self.client.bucket_exists(self.bucket_name):
             self.client.make_bucket(self.bucket_name)
-            print(f"✅ Created bucket: {self.bucket_name}")
-    
+            logger.info(f"Created MinIO bucket: {self.bucket_name}")
+        else:
+            logger.debug(f"MinIO bucket already exists: {self.bucket_name}")
+
+    @staticmethod
+    def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean a DataFrame for safe Parquet serialisation.
+
+        Replaces infinity values with ``None`` and converts numeric-like
+        object columns (excluding known text columns) to proper numeric types.
+
+        :param df: Raw DataFrame.
+        :type df: pandas.DataFrame
+        :returns: Cleaned copy of the DataFrame.
+        :rtype: pandas.DataFrame
+        """
+        df = df.copy()
+
+        # Replace infinities
+        df = df.replace([np.inf, -np.inf, 'Infinity', '-Infinity'], None)
+
+        # Known text columns that should NOT be converted to numeric
+        text_columns = {
+            'company_id', 'ticker', 'company_name', 'date', 'error',
+            'sector', 'industry', 'db_sector', 'db_industry'
+        }
+
+        # Only attempt numeric conversion on non-text object columns
+        object_cols = df.select_dtypes(include=['object']).columns
+        for col in object_cols:
+            if col not in text_columns:
+                try:
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
+                except Exception:
+                    pass
+
+        return df
+
     def store_dataframe(self, df: pd.DataFrame, object_name: str):
         """
-        Store DataFrame as Parquet in MinIO.
-        
-        Args:
-            df: DataFrame to store
-            object_name: Name/path for the object in MinIO
+        Store a DataFrame as a Parquet file in MinIO.
+
+        :param df: DataFrame to store.
+        :type df: pandas.DataFrame
+        :param object_name: Object path in MinIO
+            (e.g. ``current_data/2026/02/23/value_factors.parquet``).
+        :type object_name: str
         """
-        # Clean data: replace Infinity and bad values that Parquet can't handle
-        import numpy as np
-        df = df.copy()
-        df = df.replace([np.inf, -np.inf, 'Infinity', '-Infinity'], None)
-        # Convert numeric columns to proper types
-        numeric_cols = df.select_dtypes(include=['object']).columns
-        for col in numeric_cols:
-            try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except Exception:
-                pass
-            
-        # Convert DataFrame to Parquet bytes
+        df = self._clean_dataframe(df)
+
         parquet_bytes = BytesIO()
         df.to_parquet(parquet_bytes, index=False, engine='pyarrow')
         parquet_bytes.seek(0)
-        
-        # Upload to MinIO
+
         self.client.put_object(
             self.bucket_name,
             object_name,
@@ -63,22 +109,24 @@ class MinIOStorage:
             length=len(parquet_bytes.getvalue()),
             content_type='application/octet-stream'
         )
-        
-        print(f"✅ Stored data to MinIO: {object_name}")
-    
+
+        logger.info(f"Stored {len(df)} rows to MinIO: {object_name}")
+
     def retrieve_dataframe(self, object_name: str) -> pd.DataFrame:
         """
-        Retrieve DataFrame from MinIO.
-        
-        Args:
-            object_name: Name/path of the object in MinIO
-            
-        Returns:
-            DataFrame
+        Retrieve a DataFrame from a Parquet file in MinIO.
+
+        :param object_name: Object path in MinIO.
+        :type object_name: str
+        :returns: DataFrame read from the Parquet file.
+        :rtype: pandas.DataFrame
         """
         response = self.client.get_object(self.bucket_name, object_name)
-        df = pd.read_parquet(BytesIO(response.read()))
-        response.close()
-        response.release_conn()
-        
+        try:
+            df = pd.read_parquet(BytesIO(response.read()))
+        finally:
+            response.close()
+            response.release_conn()
+
+        logger.info(f"Retrieved {len(df)} rows from MinIO: {object_name}")
         return df
