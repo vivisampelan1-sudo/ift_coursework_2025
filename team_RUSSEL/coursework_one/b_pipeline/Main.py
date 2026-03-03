@@ -249,15 +249,17 @@ def run(config_path: str, target_year: int | None = None) -> None:
         # Eligibility rules:
         # 1. EPS > 0 — exclude loss-making firms (negative EPS distorts earnings
         #    yield and can allow such firms to rank highly on other metrics alone).
-        # 2. Exclude Real Estate — REITs use leverage-based valuation frameworks
-        #    and non-standard balance sheets; current_ratio and debt_to_equity
-        #    metrics are not meaningful for them (JPM excludes Financials/RE).
+        # 2. Exclude Financials and Real Estate — both sectors have non-standard
+        #    balance sheets where GPA (no COGS), LTDE (debt is a product) and
+        #    current_ratio are not meaningful. Amundi and JPM both exclude them.
         eps_num = pd.to_numeric(group['eps'], errors='coerce')
         eps_ok = eps_num.fillna(0) > 0
-        re_ok = ~group['db_sector'].fillna('').str.contains('Real Estate', case=False)
-        eligible = group[eps_ok & re_ok].copy()
+        sector_col = group['db_sector'].fillna('')
+        sector_ok = ~sector_col.str.contains('Real Estate|Financials|Financial Services',
+                                             case=False, regex=True)
+        eligible = group[eps_ok & sector_ok].copy()
         logger.info(f"  Scoring {year}: {len(eligible)} eligible "
-                    f"(EPS>0, ex-RealEstate) of {len(group)} companies...")
+                    f"(EPS>0, ex-Financials/RE) of {len(group)} companies...")
         scores = compute_scores(eligible.set_index("ticker"))
         scores = scores.reset_index()
         # Attach metadata
