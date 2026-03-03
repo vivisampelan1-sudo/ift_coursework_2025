@@ -75,13 +75,49 @@ def percentile_to_zscore(percentile_series: pd.Series) -> pd.Series:
     return pd.Series(stats.norm.ppf(clipped), index=percentile_series.index)
 
 
-def metric_to_zscore(series: pd.Series) -> pd.Series:
-    """Full pipeline for one metric: winsorize → percentile → z-score."""
-    valid = series.dropna()
-    if len(valid) < 5:
-        return pd.Series(np.nan, index=series.index)
+# Minimum observations required to compute a reliable z-score within a group.
+_MIN_GROUP_SIZE = 5
+
+
+def metric_to_zscore(series: pd.Series, sectors: pd.Series = None) -> pd.Series:
+    """
+    Full pipeline for one metric: winsorize → percentile → z-score.
+
+    When *sectors* is provided the transformation is applied **within each
+    sector group** (sector-neutral z-scores, per JPM methodology).  Sectors
+    with fewer than ``_MIN_GROUP_SIZE`` valid observations are pooled and
+    scored together as a residual universe-wide group.
+
+    Without *sectors* the original universe-wide z-score is used.
+    """
     result = pd.Series(np.nan, index=series.index)
-    result[valid.index] = percentile_to_zscore(to_percentile(winsorize(valid)))
+
+    if sectors is not None and not sectors.empty:
+        small_sector_idx = []
+        # Fill NaN sectors so those firms are still included in the groupby.
+        sectors_filled = sectors.fillna("__unknown__")
+        for _, grp_idx in series.groupby(sectors_filled).groups.items():
+            valid = series[grp_idx].dropna()
+            if len(valid) >= _MIN_GROUP_SIZE:
+                result[valid.index] = percentile_to_zscore(
+                    to_percentile(winsorize(valid))
+                )
+            else:
+                small_sector_idx.extend(valid.index.tolist())
+
+        # Residual fallback: score small-sector firms against each other.
+        if small_sector_idx:
+            fallback = series[small_sector_idx].dropna()
+            if len(fallback) >= _MIN_GROUP_SIZE:
+                result[fallback.index] = percentile_to_zscore(
+                    to_percentile(winsorize(fallback))
+                )
+        return result
+
+    # Universe-wide z-scores (default / no sector info).
+    valid = series.dropna()
+    if len(valid) >= _MIN_GROUP_SIZE:
+        result[valid.index] = percentile_to_zscore(to_percentile(winsorize(valid)))
     return result
 
 
@@ -184,11 +220,12 @@ def _score_dimension(
     metrics_df: pd.DataFrame,
     weights: dict,
     label: str,
+    sectors: pd.Series = None,
 ) -> tuple[pd.Series, pd.DataFrame]:
     """
     Score one dimension (value or quality):
-        1. Per-metric z-score
-        2. Weighted average of z-scores
+        1. Per-metric sector-neutral z-score (within-sector when sectors provided)
+        2. Weighted average of z-scores (per-firm, skipna)
         3. Re-rank → dimension z-score
 
     Returns (dimension_zscore, per_metric_zscore_df).
@@ -198,7 +235,7 @@ def _score_dimension(
         if col not in metrics_df.columns:
             logger.warning(f"{label}: column '{col}' missing — skipping")
             continue
-        zscores[col] = metric_to_zscore(metrics_df[col])
+        zscores[col] = metric_to_zscore(metrics_df[col], sectors=sectors)
         valid_n = metrics_df[col].notna().sum()
         logger.debug(f"  {col}: {valid_n} valid firms")
 
@@ -231,11 +268,14 @@ def compute_scores(df: pd.DataFrame) -> pd.DataFrame:
     :returns: DataFrame with all metric z-scores, value_score, quality_score,
               composite_score, composite_percentile, quintile.
     """
+    # Extract sector labels for sector-neutral z-scoring (JPM methodology).
+    sectors = df["db_sector"] if "db_sector" in df.columns else None
+
     val_metrics = compute_value_metrics(df)
     qual_metrics = compute_quality_metrics(df)
 
-    val_z, val_detail = _score_dimension(val_metrics, VALUE_WEIGHTS, "Value")
-    qual_z, qual_detail = _score_dimension(qual_metrics, QUALITY_WEIGHTS, "Quality")
+    val_z, val_detail = _score_dimension(val_metrics, VALUE_WEIGHTS, "Value", sectors=sectors)
+    qual_z, qual_detail = _score_dimension(qual_metrics, QUALITY_WEIGHTS, "Quality", sectors=sectors)
 
     # Composite: 50% Value + 50% Quality  (Section 7 of the spec)
     composite_raw = pd.Series(np.nan, index=df.index)

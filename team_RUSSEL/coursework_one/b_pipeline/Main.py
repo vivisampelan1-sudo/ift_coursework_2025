@@ -246,12 +246,18 @@ def run(config_path: str, target_year: int | None = None) -> None:
     # Score each rebalance year independently (cross-sectional)
     all_results = []
     for year, group in raw.groupby("year"):
-        # Eligibility rule: require EPS > 0 to exclude loss-making firms from
-        # quintile ranking (negative EPS distorts earnings yield and can allow
-        # loss-making firms to rank highly on cash flow / quality alone).
+        # Eligibility rules:
+        # 1. EPS > 0 — exclude loss-making firms (negative EPS distorts earnings
+        #    yield and can allow such firms to rank highly on other metrics alone).
+        # 2. Exclude Real Estate — REITs use leverage-based valuation frameworks
+        #    and non-standard balance sheets; current_ratio and debt_to_equity
+        #    metrics are not meaningful for them (JPM excludes Financials/RE).
         eps_num = pd.to_numeric(group['eps'], errors='coerce')
-        eligible = group[eps_num.fillna(0) > 0].copy()
-        logger.info(f"  Scoring {year}: {len(eligible)} eligible (EPS>0) of {len(group)} companies...")
+        eps_ok = eps_num.fillna(0) > 0
+        re_ok = ~group['db_sector'].fillna('').str.contains('Real Estate', case=False)
+        eligible = group[eps_ok & re_ok].copy()
+        logger.info(f"  Scoring {year}: {len(eligible)} eligible "
+                    f"(EPS>0, ex-RealEstate) of {len(group)} companies...")
         scores = compute_scores(eligible.set_index("ticker"))
         scores = scores.reset_index()
         # Attach metadata
