@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from modules.input.data_extractor import DataExtractor
+from a_pipeline.modules.input.data_extractor import DataExtractor
 
 
 @pytest.fixture
@@ -179,7 +179,7 @@ class TestExtractCompanyData:
             "industry": "Consumer Electronics",
         }
 
-        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+        with patch("a_pipeline.modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
             result = extractor.extract_company_data(sample_company)
 
         assert isinstance(result, pd.DataFrame)
@@ -190,7 +190,7 @@ class TestExtractCompanyData:
         mock_stock = MagicMock()
         mock_stock.info = {"currentPrice": 150.0, "trailingPE": 28.5}
 
-        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+        with patch("a_pipeline.modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
             result = extractor.extract_company_data(sample_company)
 
         for col in ["ticker", "date", "pe_ratio", "roe", "profit_margin"]:
@@ -201,7 +201,7 @@ class TestExtractCompanyData:
         mock_stock = MagicMock()
         mock_stock.info = {}
 
-        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+        with patch("a_pipeline.modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
             result = extractor.extract_company_data(sample_company)
 
         assert result.iloc[0]["ticker"] == "AAPL"
@@ -209,7 +209,7 @@ class TestExtractCompanyData:
     def test_returns_row_on_exception(self, extractor, sample_company):
         """extract_company_data returns a row even when yfinance raises."""
         with patch(
-            "modules.input.data_extractor.yf.Ticker",
+            "a_pipeline.modules.input.data_extractor.yf.Ticker",
             side_effect=Exception("Network error"),
         ):
             result = extractor.extract_company_data(sample_company)
@@ -223,7 +223,7 @@ class TestExtractCompanyData:
         mock_stock = MagicMock()
         mock_stock.info = {}
 
-        with patch("modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
+        with patch("a_pipeline.modules.input.data_extractor.yf.Ticker", return_value=mock_stock):
             result = extractor.extract_company_data(sample_company)
 
         assert result.iloc[0]["db_sector"] == "Technology"

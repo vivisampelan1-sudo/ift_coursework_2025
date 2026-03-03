@@ -8,7 +8,7 @@ import tempfile
 import os
 from pathlib import Path
 
-from modules.utils.config_loader import load_config
+from a_pipeline.modules.utils.config_loader import load_config
 
 
 class TestLoadConfig:

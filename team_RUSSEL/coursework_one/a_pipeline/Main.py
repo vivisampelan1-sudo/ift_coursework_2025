@@ -12,14 +12,17 @@ for companies in the investable universe.
 import argparse
 from datetime import datetime
 import logging
+import os
 import sys
 
-from modules.utils.config_loader import load_config
-from modules.db.db_connection import DatabaseConnector, load_company_list
-from modules.input.data_extractor import DataExtractor
-from modules.output.minio_storage import MinIOStorage
-from modules.output.mongo_storage import MongoStorage
-from modules.output.postgres_storage import PostgresStorage
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from a_pipeline.modules.utils.config_loader import load_config
+from a_pipeline.modules.db.db_connection import DatabaseConnector, load_company_list
+from a_pipeline.modules.input.data_extractor import DataExtractor
+from a_pipeline.modules.output.minio_storage import MinIOStorage
+from a_pipeline.modules.output.mongo_storage import MongoStorage
+from a_pipeline.modules.output.postgres_storage import PostgresStorage
 
 
 def setup_logging(config):

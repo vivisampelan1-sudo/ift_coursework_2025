@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch, call
 
-from modules.output.postgres_storage import PostgresStorage
+from a_pipeline.modules.output.postgres_storage import PostgresStorage
 
 
 @pytest.fixture

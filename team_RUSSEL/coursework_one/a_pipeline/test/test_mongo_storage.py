@@ -8,7 +8,7 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 
-from modules.output.mongo_storage import MongoStorage
+from a_pipeline.modules.output.mongo_storage import MongoStorage
 
 
 @pytest.fixture

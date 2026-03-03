@@ -9,7 +9,7 @@ import numpy as np
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
-from modules.output.minio_storage import MinIOStorage
+from a_pipeline.modules.output.minio_storage import MinIOStorage
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def config():
 
 @pytest.fixture
 def storage(config):
-    with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+    with patch("a_pipeline.modules.output.minio_storage.Minio") as mock_minio_cls:
         mock_client = MagicMock()
         mock_client.bucket_exists.return_value = True
         mock_minio_cls.return_value = mock_client
@@ -98,7 +98,7 @@ class TestMinIOStorageInit:
 
     def test_creates_bucket_if_not_exists(self, config):
         """MinIOStorage creates bucket when it does not exist."""
-        with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+        with patch("a_pipeline.modules.output.minio_storage.Minio") as mock_minio_cls:
             mock_client = MagicMock()
             mock_client.bucket_exists.return_value = False
             mock_minio_cls.return_value = mock_client
@@ -109,7 +109,7 @@ class TestMinIOStorageInit:
 
     def test_does_not_create_bucket_if_exists(self, config):
         """MinIOStorage does not create bucket when it already exists."""
-        with patch("modules.output.minio_storage.Minio") as mock_minio_cls:
+        with patch("a_pipeline.modules.output.minio_storage.Minio") as mock_minio_cls:
             mock_client = MagicMock()
             mock_client.bucket_exists.return_value = True
             mock_minio_cls.return_value = mock_client

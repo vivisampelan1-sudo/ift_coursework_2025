@@ -19,9 +19,13 @@ dependencies = [
     "apscheduler (>=3.11.2,<4.0.0)",
     "requests (>=2.32.5,<3.0.0)",
     "pyarrow (>=23.0.0,<24.0.0)",
-    "yfinance (>=1.2.0,<2.0.0)"
+    "yfinance (>=1.2.0,<2.0.0)",
+    "scipy (>=1.17.1,<2.0.0)"
 ]
 
+
+[tool.poetry]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -40,14 +44,14 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["test"]
+testpaths = ["a_pipeline/test", "b_pipeline/test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--tb=short -q"
 
 [tool.coverage.run]
-source = ["modules"]
+source = ["a_pipeline/modules", "b_pipeline/modules"]
 omit = ["test/*", "scripts/*"]
 
 [tool.coverage.report]

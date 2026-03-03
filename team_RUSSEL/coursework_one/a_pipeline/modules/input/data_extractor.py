@@ -261,6 +261,10 @@ class DataExtractor:
             shares = _get(stmt_bal, 'Ordinary Shares Number', p_date)
             if shares is None:
                 shares = _get(stmt_bal, 'Share Issued', p_date)
+            # Current ratio = Current Assets / Current Liabilities (from balance sheet)
+            current_assets = _get(stmt_bal, 'Current Assets', p_date)
+            current_liabilities = _get(stmt_bal, 'Current Liabilities', p_date)
+            current_ratio_val = self._safe_divide(current_assets, current_liabilities)
 
             # Skip periods where key data is all NaN
             if eps_val is None and equity is None and shares is None:
@@ -292,6 +296,7 @@ class DataExtractor:
                 'roe': roe,
                 'roa': roa,
                 'debt_to_equity': d2e,
+                'current_ratio': current_ratio_val,
                 'profit_margin': profit_margin,
                 'operating_margin': operating_margin,
                 'gross_margin': gross_margin,
@@ -402,8 +407,9 @@ class DataExtractor:
         # computed, so ratios still reflect the actual price at each date.
         raw_fund_cols = [
             'eps', 'book_value', 'shares', 'revenue', 'ebitda', 'total_debt',
-            'cash', 'roe', 'roa', 'debt_to_equity', 'profit_margin',
-            'operating_margin', 'gross_margin', 'free_cash_flow', 'net_income',
+            'cash', 'roe', 'roa', 'debt_to_equity', 'current_ratio',
+            'profit_margin', 'operating_margin', 'gross_margin',
+            'free_cash_flow', 'net_income',
         ]
         for col in raw_fund_cols:
             if col in merged.columns:
@@ -435,8 +441,6 @@ class DataExtractor:
         # Not available historically
         merged['forward_pe'] = None
         merged['forward_eps'] = None
-        merged['dividend_yield'] = None
-        merged['current_ratio'] = None
 
         # Clean up
         drop_cols = ['_date_dt', '_f_date_dt', 'f_date', 'shares',
@@ -542,6 +546,36 @@ class DataExtractor:
                 hist['dividend_yield'] = _v('dividendYield')
             else:
                 hist = self._merge_fundamentals_to_monthly(hist, fund_df)
+
+            # Compute trailing 12-month dividend yield from actual dividend payments.
+            # This replaces any placeholder None and gives a proper historical time
+            # series — non-payers receive 0.0 so they are not penalised.
+            try:
+                dividends = stock.dividends
+                if dividends is not None and not dividends.empty:
+                    div = dividends.copy()
+                    div.index = pd.to_datetime(div.index).tz_localize(None)
+                    hist_dates = pd.to_datetime(hist['date'])
+                    ttm_divs = []
+                    for dt in hist_dates:
+                        ttm_start = dt - pd.DateOffset(months=12)
+                        ttm_divs.append(
+                            float(div[(div.index > ttm_start) & (div.index <= dt)].sum())
+                        )
+                    ttm_series = pd.Series(ttm_divs, index=hist.index)
+                    close_num = pd.to_numeric(hist['close'], errors='coerce')
+                    hist['dividend_yield'] = np.where(
+                        (close_num > 0) & (ttm_series > 0),
+                        ttm_series / close_num,
+                        0.0,
+                    )
+                else:
+                    hist['dividend_yield'] = 0.0
+            except Exception:
+                hist['dividend_yield'] = pd.to_numeric(
+                    hist.get('dividend_yield', pd.Series(0.0, index=hist.index)),
+                    errors='coerce',
+                ).fillna(0.0)
 
             logger.info(f"Extracted {len(hist)} historical records for {ticker}")
             return hist
