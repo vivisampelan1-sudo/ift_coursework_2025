@@ -48,7 +48,7 @@ testpaths = ["a_pipeline/test", "b_pipeline/test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--tb=short -q"
+addopts = "--tb=short -q --import-mode=importlib"
 
 [tool.coverage.run]
 source = ["a_pipeline/modules", "b_pipeline/modules"]
